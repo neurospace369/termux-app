@@ -1,112 +1,103 @@
-package com.termux.view;
+bash deploy_smart_contract.sh
+#!/data/data/com.termux/files/usr/bin/bash
 
-import android.content.Context;
-import android.view.GestureDetector;
-import android.view.MotionEvent;
-import android.view.ScaleGestureDetector;
+# Exit on errors
+set -e
 
-/** A combination of {@link GestureDetector} and {@link ScaleGestureDetector}. */
-final class GestureAndScaleRecognizer {
+# Define variables
+REPO_NAME="neurospace-smart-contract"
+GITHUB_USER="your-github-username"
+GITHUB_TOKEN="your-github-token"  # Use with caution, prefer SSH authentication
+ALCHEMY_API_KEY="your-alchemy-api-key"
+WALLET_PRIVATE_KEY="your-private-key"
 
-    public interface Listener {
-        boolean onSingleTapUp(MotionEvent e);
+# Update Termux and install required packages
+pkg update -y && pkg upgrade -y
+pkg install nodejs git -y
 
-        boolean onDoubleTap(MotionEvent e);
+# Check if Node.js and npm are installed
+node -v
+npm -v
 
-        boolean onScroll(MotionEvent e2, float dx, float dy);
+# Set up Hardhat project
+mkdir $REPO_NAME && cd $REPO_NAME
+npm init -y
+npm install --save-dev hardhat
 
-        boolean onFling(MotionEvent e, float velocityX, float velocityY);
+# Initialize Hardhat
+npx hardhat init --yes
 
-        boolean onScale(float focusX, float focusY, float scale);
+# Create Solidity contract
+mkdir contracts
+cat <<EOF > contracts/NeurospaceContract.sol
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
 
-        boolean onDown(float x, float y);
+contract NeurospaceContract {
+    string public message;
 
-        boolean onUp(MotionEvent e);
-
-        void onLongPress(MotionEvent e);
+    constructor(string memory _message) {
+        message = _message;
     }
 
-    private final GestureDetector mGestureDetector;
-    private final ScaleGestureDetector mScaleDetector;
-    final Listener mListener;
-    boolean isAfterLongPress;
-
-    public GestureAndScaleRecognizer(Context context, Listener listener) {
-        mListener = listener;
-
-        mGestureDetector = new GestureDetector(context, new GestureDetector.SimpleOnGestureListener() {
-            @Override
-            public boolean onScroll(MotionEvent e1, MotionEvent e2, float dx, float dy) {
-                return mListener.onScroll(e2, dx, dy);
-            }
-
-            @Override
-            public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
-                return mListener.onFling(e2, velocityX, velocityY);
-            }
-
-            @Override
-            public boolean onDown(MotionEvent e) {
-                return mListener.onDown(e.getX(), e.getY());
-            }
-
-            @Override
-            public void onLongPress(MotionEvent e) {
-                mListener.onLongPress(e);
-                isAfterLongPress = true;
-            }
-        }, null, true /* ignoreMultitouch */);
-
-        mGestureDetector.setOnDoubleTapListener(new GestureDetector.OnDoubleTapListener() {
-            @Override
-            public boolean onSingleTapConfirmed(MotionEvent e) {
-                return mListener.onSingleTapUp(e);
-            }
-
-            @Override
-            public boolean onDoubleTap(MotionEvent e) {
-                return mListener.onDoubleTap(e);
-            }
-
-            @Override
-            public boolean onDoubleTapEvent(MotionEvent e) {
-                return true;
-            }
-        });
-
-        mScaleDetector = new ScaleGestureDetector(context, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            @Override
-            public boolean onScaleBegin(ScaleGestureDetector detector) {
-                return true;
-            }
-
-            @Override
-            public boolean onScale(ScaleGestureDetector detector) {
-                return mListener.onScale(detector.getFocusX(), detector.getFocusY(), detector.getScaleFactor());
-            }
-        });
-        mScaleDetector.setQuickScaleEnabled(false);
+    function setMessage(string memory _message) public {
+        message = _message;
     }
-
-    public void onTouchEvent(MotionEvent event) {
-        mGestureDetector.onTouchEvent(event);
-        mScaleDetector.onTouchEvent(event);
-        switch (event.getAction()) {
-            case MotionEvent.ACTION_DOWN:
-                isAfterLongPress = false;
-                break;
-            case MotionEvent.ACTION_UP:
-                if (!isAfterLongPress) {
-                    // This behaviour is desired when in e.g. vim with mouse events, where we do not
-                    // want to move the cursor when lifting finger after a long press.
-                    mListener.onUp(event);
-                }
-                break;
-        }
-    }
-
-    public boolean isInProgress() {
-        return mScaleDetector.isInProgress();
-    }
-
 }
+EOF
+
+# Configure Hardhat for deployment
+cat <<EOF > hardhat.config.js
+require("@nomicfoundation/hardhat-toolbox");
+
+module.exports = {
+  solidity: "0.8.20",
+  networks: {
+    goerli: {
+      url: "https://eth-goerli.g.alchemy.com/v2/$ALCHEMY_API_KEY",
+      accounts: ["$WALLET_PRIVATE_KEY"]
+    }
+  }
+};
+EOF
+
+# Compile contract
+npx hardhat compile
+
+# Create deployment script
+mkdir scripts
+cat <<EOF > scripts/deploy.js
+const hre = require("hardhat");
+
+async function main() {
+  const Contract = await hre.ethers.getContractFactory("NeurospaceContract");
+  const contract = await Contract.deploy("Hello, Neurospace!");
+
+  await contract.deployed();
+
+  console.log("Neurospace Contract deployed at:", contract.address);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+EOF
+
+# Create GitHub repository
+git init
+git remote add origin https://$GITHUB_USER:$GITHUB_TOKEN@github.com/$GITHUB_USER/$REPO_NAME.git
+
+# Create .gitignore
+cat <<EOF > .gitignore
+node_modules
+.env
+EOF
+
+# Add and commit changes
+git add .
+git commit -m "Initial commit: Neurospace smart contract"
+git branch -M main
+git push -u origin main
+
+echo "Smart contract successfully pushed to GitHub at https://github.com/$GITHUB_USER/$REPO_NAME"
